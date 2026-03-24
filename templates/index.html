@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grasp AI - Knowledge Simplified</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="logo">Gra<span>sp</span></a>
+        <div class="auth-section">
+            {% if user %}
+                <span style="font-weight:600; margin-right:15px;">Hi, {{ user }}</span>
+                <a href="/logout" style="color:#e74c3c; text-decoration:none; font-weight:600;">Logout</a>
+            {% else %}
+                <button onclick="openAuth('login')" style="background:var(--primary); color:white; border:none; padding:8px 20px; border-radius:50px; cursor:pointer; font-weight:600;">Login / Register</button>
+            {% endif %}
+        </div>
+    </nav>
+
+    {% if user %}
+    <div class="history-sidebar">
+        {% if bookmarks %}
+            <div style="font-size:11px; font-weight:800; color:#f1c40f; margin-bottom:10px;">⭐ BOOKMARKS</div>
+            {% for b in bookmarks %}
+                <div class="history-item" id="side-{{ b.id }}" style="background:#fffdf0; border-left:3px solid #f1c40f;">
+                    <span onclick='displayResult({{ b | tojson | safe }}, true)' style="flex:1;">{{ b.question }}</span>
+                </div>
+            {% endfor %}
+            <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
+        {% endif %}
+
+        <div style="font-size:11px; font-weight:800; color:#bbb; margin-bottom:10px;">🕒 HISTORY</div>
+        {% for date, items in grouped_history.items() %}
+            <div style="font-size:10px; color:#aaa; margin-top:10px;">{{ date }}</div>
+            {% for item in items %}
+                <div class="history-item" id="side-{{ item.id }}">
+                    <span onclick='displayResult({{ item | tojson | safe }}, true)' style="flex:1;">{{ item.question }}</span>
+                    <span onclick="deleteItem({{ item.id }}, 'side-{{ item.id }}')" style="opacity:0.3; cursor:pointer; font-size:12px;">🗑️</span>
+                </div>
+            {% endfor %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div id="search-section" class="search-wrapper">
+        <div id="welcome-text">
+            <h1 style="font-size:75px; margin:0; font-weight:800; letter-spacing:-2px;">Gra<span>sp</span></h1>
+            <p style="color:#777; margin-bottom:35px; font-size:18px;">Ask anything, grasp everything.</p>
+        </div>
+        
+        <div class="search-box">
+            <div class="plus-icon" onclick="alert('File Upload Feature Coming Soon!')" style="display: flex; align-items: center; justify-content: center; padding: 0 15px; cursor: pointer; color: #555; font-size: 22px; transition: 0.3s; border-right: 1px solid #ddd;">
+                +
+            </div>
+            
+            <input type="text" id="user-question" 
+                   placeholder="Ask Grasp AI..." 
+                   oninput="updateMathPreview()"
+                   onkeypress="if(event.key==='Enter') startAsk()" 
+                   style="padding-left: 15px;">
+            <button onclick="startAsk()">Search</button>
+        </div>
+
+        <div id="mathPreviewWrapper" style="margin-top: 15px; min-height: 35px; text-align: center;">
+            <span id="mathPreview" style="font-size: 22px; color: #2ecc71; font-family: 'Times New Roman', serif; font-weight: bold;"></span>
+        </div>
+
+        <div id="loader" style="display:none; margin-top:15px; color:var(--primary); font-weight:600;">Grasping... 🚀</div>
+    </div>
+
+    <div id="results-view" class="results-container">
+        <div id="results-holder"></div>
+    </div>
+
+    <div id="authModal" class="modal-overlay">
+        <div class="modal-card">
+            <h2 id="modal-title" style="margin-bottom:20px;">Login</h2>
+            <div id="reg-fields" style="display:none;">
+                <input type="text" id="auth-name" placeholder="Full Name">
+            </div>
+            <input type="email" id="auth-email" placeholder="Email Address">
+            <input type="password" id="auth-pass" placeholder="Password">
+            <button onclick="handleAuth()" id="auth-btn" style="background:var(--primary); color:white; border:none; width:100%; padding:12px; border-radius:12px; font-weight:700; cursor:pointer; margin-top:10px;">Submit</button>
+            <p id="auth-toggle-msg" style="font-size:13px; margin-top:20px; color:#666;">
+                New here? <span onclick="openAuth('register')" style="color:var(--primary); cursor:pointer; font-weight:700;">Create an Account</span>
+            </p>
+            <p onclick="closeAuth()" style="font-size:12px; color:#bbb; cursor:pointer; margin-top:15px; text-decoration:underline;">Close</p>
+        </div>
+    </div>
+
+    <div id="imageModal" onclick="closeFullImage()" style="display:none; position:fixed; z-index:99999; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.9); align-items:center; justify-content:center; opacity:0; transition: opacity 0.3s ease; cursor:pointer;">
+        <img id="fullImg" style="max-width:85%; max-height:85%; border-radius:15px; box-shadow:0 0 50px rgba(0,0,0,0.7); transform:scale(0.8); transition: transform 0.3s ease-out; border: 4px solid white;">
+    </div>
+
+    <script>
+        // Global Variables
+        const isUserLoggedIn = {{ 'true' if user else 'false' }};
+
+        // --- 1. MATH PREVIEW LOGIC ---
+        function updateMathPreview() {
+            let query = document.getElementById('user-question').value;
+            const preview = document.getElementById('mathPreview');
+            if (!query) { preview.innerHTML = ""; return; }
+            let formatted = query
+                .replace(/\^2/g, '²').replace(/\^3/g, '³')
+                .replace(/\^(\d+)/g, '<sup>$1</sup>')
+                .replace(/\*/g, ' × ').replace(/\//g, ' ÷ ')
+                .replace(/pi/gi, 'π').replace(/theta/gi, 'θ');
+            preview.innerHTML = formatted;
+        }
+
+        // --- 2. PDF LOGIC ---
+        async function downloadNotes(question) {
+            const btn = event.currentTarget;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "⏳ Designing Professional Report...";
+            btn.disabled = true;
+            try {
+                const response = await fetch('/get_pdf_content', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question })
+                });
+                const data = await response.json();
+                if (!data.success) throw new Error(data.msg);
+
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                let yPos = 30;
+                const pageHeight = doc.internal.pageSize.height;
+                const margin = 25; 
+
+                doc.setFillColor(46, 204, 113); 
+                doc.rect(0, 0, 210, 20, 'F'); 
+                doc.setFont("helvetica", "bold");
+                doc.setFontSize(10); doc.setTextColor(255);
+                doc.text("GRASP AI PROFESSIONAL RESEARCH SERIES", margin, 13);
+
+                yPos = 40;
+                doc.setFont("times", "bold"); doc.setFontSize(26); doc.setTextColor(44, 62, 80);
+                doc.text(question.toUpperCase(), margin, yPos);
+                
+                yPos += 15;
+                const paragraphs = data.detailed_content.split('\n');
+                paragraphs.forEach(para => {
+                    let lineStr = para.trim();
+                    if (!lineStr) { yPos += 5; return; }
+                    const isHeading = lineStr.length < 60 && (lineStr.includes(':') || !lineStr.endsWith('.'));
+                    if (isHeading) {
+                        doc.setFont("times", "bold"); doc.setFontSize(16); doc.setTextColor(44, 62, 80);
+                        if (yPos > pageHeight - 40) { doc.addPage(); yPos = 35; }
+                        doc.text(lineStr.replace(/[#*]/g, ''), margin, yPos);
+                        yPos += 10;
+                    } else {
+                        doc.setFont("times", "normal"); doc.setFontSize(12); doc.setTextColor(60, 60, 60);
+                        const lines = doc.splitTextToSize(lineStr.replace(/[#*]/g, ''), 160);
+                        lines.forEach(line => {
+                            if (yPos > pageHeight - 30) { doc.addPage(); yPos = 30; }
+                            doc.text(line, margin, yPos);
+                            yPos += 7.5;
+                        });
+                        yPos += 4;
+                    }
+                });
+                doc.save(`GraspAI_${question.replace(/\s+/g, '_')}.pdf`);
+            } catch (err) { alert("PDF Error: " + err.message); }
+            finally { btn.innerHTML = originalText; btn.disabled = false; }
+        }
+
+        // --- 3. AUTH & SEARCH LOGIC ---
+        let authMode = 'login';
+        function openAuth(mode) {
+            authMode = mode;
+            document.getElementById('authModal').style.display = 'flex';
+            if (mode === 'register') {
+                document.getElementById('modal-title').innerText = "Join Grasp";
+                document.getElementById('reg-fields').style.display = "block";
+                document.getElementById('auth-btn').innerText = "Create Account";
+            } else {
+                document.getElementById('modal-title').innerText = "Welcome Back";
+                document.getElementById('reg-fields').style.display = "none";
+                document.getElementById('auth-btn').innerText = "Login";
+            }
+        }
+        function closeAuth() { document.getElementById('authModal').style.display = 'none'; }
+        async function handleAuth() {
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-pass').value;
+            const name = document.getElementById('auth-name').value;
+            const payload = { email, password };
+            if (authMode === 'register') payload.name = name;
+            const r = await fetch('/' + authMode, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const d = await r.json();
+            if (d.success) location.reload(); else alert("Invalid credentials!");
+        }
+
+        async function startAsk() {
+            const q = document.getElementById('user-question').value;
+            if(!q) return;
+            document.getElementById('search-section').classList.add('active');
+            document.getElementById('welcome-text').style.display = 'none';
+            document.getElementById('loader').style.display = 'block';
+            document.getElementById('results-view').style.display = 'block';
+            try {
+                const r = await fetch('/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q }) });
+                const d = await r.json();
+                document.getElementById('loader').style.display = 'none';
+                if(d.success) displayResult(d, false);
+                else alert("Error: " + d.msg);
+            } catch (err) { document.getElementById('loader').innerText = "Network Error!"; }
+        }
+
+        function displayResult(d, fromHistory) {
+    if (fromHistory) {
+        document.getElementById('search-section').classList.add('active');
+        document.getElementById('welcome-text').style.display = 'none';
+    }
+    document.getElementById('results-view').style.display = 'block';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    let fullRaw = d.answer || "";
+    let mainBody = "", deepAnalysis = "Deep analysis not found.";
+    let analysisParts = fullRaw.split(/analysis:/i);
+    if (analysisParts.length > 1) { 
+        mainBody = analysisParts[0].trim(); 
+        deepAnalysis = analysisParts[1].trim(); 
+    } else { 
+        mainBody = fullRaw; 
+    }
+
+    let bit = (mainBody.match(/\[BIT\]([\s\S]*?)\[SHORT\]/) || [])[1] || "N/A";
+    let short = (mainBody.match(/\[SHORT\]([\s\S]*?)\[MEDIUM\]/) || [])[1] || "N/A";
+    let medium = (mainBody.match(/\[MEDIUM\]([\s\S]*?)\[LONG\]/) || [])[1] || "N/A";
+    let long = (mainBody.match(/\[LONG\]([\s\S]*?)$/) || [])[1] || mainBody;
+
+    // Markdown Rendering function (marked.js vundi anukuntunna)
+    // --- RENDER MARKDOWN UPDATED ---
+const renderMarkdown = (txt) => {
+    if (!txt || txt === "N/A") return "N/A";
+    // AI text lo '+' symbols unte vatini '*' ga marchali marked.js points ga gurtinchadaniki
+    let cleanTxt = txt.trim().replace(/^\s*\+\s/gm, '* '); 
+    return typeof marked !== 'undefined' ? marked.parse(cleanTxt) : cleanTxt;
+};
+
+    const cardId = `card-${Math.floor(Math.random() * 100000)}`;
+
+    const card = `
+        <div class="result-card" id="${cardId}" 
+             data-question="${d.question.replace(/"/g, '&quot;')}"
+             data-bit="${bit.replace(/"/g, '&quot;')}" 
+             data-short="${short.replace(/"/g, '&quot;')}" 
+             data-medium="${medium.replace(/"/g, '&quot;')}" 
+             data-long="${long.replace(/"/g, '&quot;')}"
+             style="background:white; padding:35px; border-radius:25px; box-shadow:0 10px 40px rgba(0,0,0,0.05); margin-bottom:30px; transition: 0.5s ease;">
+            
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px;">
+                <h2 style="margin:0; font-size:22px; color:#2c3e50; flex:1; font-weight:800;">❓ ${d.question}</h2>
+                <div style="display:flex; align-items:center; gap:15px;">
+                    <span onclick="shareResult('${cardId}')" 
+                          style="cursor:pointer; font-size:18px; color:#3498db; transition:0.3s;" 
+                          title="Share Result">
+                        <i class="fa-solid fa-share-nodes"></i>
+                    </span>
+
+                    <span onclick="deleteItem(${d.id}, '${cardId}')" 
+                          style="cursor:pointer; font-size:18px; opacity:0.3; transition:0.3s;" 
+                          onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.3'">🗑️</span>
+                    
+                    <button onclick="${isUserLoggedIn ? `toggleBookmark(${d.id})` : "openAuth('login')"}" 
+                            style="background:none; border:none; cursor:pointer; font-size:24px;">
+                        ${d.is_bookmarked ? '⭐' : '☆'}
+                    </button>
+                </div>
+            </div>
+
+            <div style="display:flex; gap:30px; flex-wrap:wrap;">
+                <div style="flex:2.5; min-width:300px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; background:#f9f9f9; padding:10px; border-radius:12px;">
+                        <span style="font-weight:700; color:#2ecc71;">Mode:</span>
+                        <div class="length-selector" style="display:flex; gap:5px;">
+                            <button class="len-btn" onclick="switchLen('${cardId}', 'bit', this)" style="padding:5px 12px; border-radius:8px; border:1px solid #2ecc71; background:white; cursor:pointer; font-size:12px; font-weight:600; color:#2ecc71;">Bit</button>
+                            <button class="len-btn" onclick="switchLen('${cardId}', 'short', this)" style="padding:5px 12px; border-radius:8px; border:1px solid #2ecc71; background:white; cursor:pointer; font-size:12px; font-weight:600; color:#2ecc71;">Short</button>
+                            <button class="len-btn active" onclick="switchLen('${cardId}', 'medium', this)" style="padding:5px 12px; border-radius:8px; border:none; background:#2ecc71; color:white; cursor:pointer; font-size:12px; font-weight:600;">Medium</button>
+                            <button class="len-btn" onclick="switchLen('${cardId}', 'long', this)" style="padding:5px 12px; border-radius:8px; border:1px solid #2ecc71; background:white; cursor:pointer; font-size:12px; font-weight:600; color:#2ecc71;">Long</button>
+                        </div>
+                    </div>
+                    <div id="${cardId}-text" class="markdown-body" style="line-height:1.8; color:#444;">
+                        ${renderMarkdown(medium)}
+                    </div>
+                </div>
+                <div style="flex:0.8; display:grid; gap:12px;">
+                    ${d.images.slice(0, 2).map(img => `<img src="${img}" onclick="openFullImage('${img}')" style="width:100%; height:130px; object-fit:cover; border-radius:15px; cursor:pointer;">`).join('')}
+                </div>
+            </div>
+
+            <div style="margin-top:30px; background:#f4fbf7; padding:25px; border-radius:20px; border-left:5px solid #2ecc71;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h3 style="margin:0; color:#1e8449;">🔬 Deep Analysis</h3>
+                    <button class="notes-btn" onclick="downloadNotes('${d.question.replace(/'/g, "\\'")}')">📄 Get Research PDF</button>
+                </div>
+                <div style="font-size:14.5px; color:#444;">${renderMarkdown(deepAnalysis)}</div>
+            </div>
+        </div>`;
+    document.getElementById('results-holder').insertAdjacentHTML('afterbegin', card);
+}
+
+// Global Share Function
+async function shareResult(cardId) {
+    const card = document.getElementById(cardId);
+    const question = card.getAttribute('data-question');
+    const textContent = document.getElementById(cardId + '-text').innerText;
+    
+    const shareData = {
+        title: 'Grasp AI Research',
+        text: `*Question:* ${question}\n\n*Answer:* \n${textContent}\n\nGenerated via Grasp AI 🚀`,
+        url: window.location.href
+    };
+
+    try {
+        if (navigator.share) {
+            await navigator.share(shareData);
+        } else {
+            // Fallback for desktop
+            await navigator.clipboard.writeText(shareData.text);
+            alert("Content copied to clipboard! You can now paste it in WhatsApp or Mail.");
+        }
+    } catch (err) {
+        console.error("Share failed:", err);
+    }
+}
+
+       function switchLen(cardId, type, btn) {
+    const card = document.getElementById(cardId);
+    const textHolder = document.getElementById(cardId + '-text');
+    
+    // Marked.js rendering safe ga vundali kabatti
+    const renderMarkdown = (txt) => {
+        if (!txt || txt === "N/A" || txt === undefined) return "No content available.";
+        return typeof marked !== 'undefined' ? marked.parse(txt.trim()) : txt;
+    };
+
+    const content = card.getAttribute('data-' + type);
+    
+    if (content && content !== "N/A") {
+        // 1. Text change cheyyi (With Markdown)
+        textHolder.innerHTML = renderMarkdown(content);
+
+        // 2. All buttons ni reset cheyyi (Patha styles apply cheyyi)
+        card.querySelectorAll('.len-btn').forEach(b => {
+            b.classList.remove('active'); // Active class teeyali
+            b.style.background = "white"; 
+            b.style.color = "#2ecc71"; 
+            b.style.border = "1px solid #2ecc71";
+        });
+
+        // 3. Click chesina button ni Highlight cheyyi
+        btn.classList.add('active'); // Kothadi add cheyyi
+        btn.style.background = "#2ecc71"; 
+        btn.style.color = "white"; 
+        btn.style.border = "none";
+    }
+}
+
+        function openFullImage(imgSrc) { 
+            const m = document.getElementById('imageModal'); 
+            document.getElementById('fullImg').src = imgSrc; 
+            m.style.display = "flex"; 
+            setTimeout(() => { m.style.opacity = "1"; document.getElementById('fullImg').style.transform = "scale(1)"; }, 10); 
+        }
+        function closeFullImage() { 
+            const m = document.getElementById('imageModal'); 
+            m.style.opacity = "0"; document.getElementById('fullImg').style.transform = "scale(0.8)"; 
+            setTimeout(() => { m.style.display = "none"; }, 300); 
+        }
+
+        async function toggleBookmark(id) { 
+            const r = await fetch('/bookmark', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id: id})}); 
+            if((await r.json()).success) location.reload(); 
+        }
+
+        async function deleteItem(id, elementId) {
+            if(confirm("Delete this from history?")) {
+                const r = await fetch('/delete_history', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({id: id}) 
+                });
+                if((await r.json()).success) {
+                    const el = document.getElementById(elementId);
+                    if(el) {
+                        el.style.opacity = '0';
+                        el.style.transform = 'translateX(20px)';
+                        setTimeout(() => el.remove(), 500);
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
