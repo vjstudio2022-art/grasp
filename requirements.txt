@@ -4,3 +4,4 @@ flask_bcrypt
 groq
 duckduckgo_search
 gunicorn
+requests
