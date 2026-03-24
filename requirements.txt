@@ -1,0 +1,6 @@
+flask
+flask_sqlalchemy
+flask_bcrypt
+groq
+duckduckgo_search
+gunicorn
